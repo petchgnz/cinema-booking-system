@@ -6,7 +6,7 @@
 .env.*.local
 
 # ===========================
-# Go
+# Go & Firebase
 # ===========================
 *.exe
 *.exe~
@@ -17,6 +17,7 @@
 *.out
 go.work.sum
 apps/backend/tmp/
+apps/backend/firebase-credentials.json
 
 # ===========================
 # Vue / Node
@@ -44,3 +45,5 @@ $RECYCLE.BIN/
 # ===========================
 .vscode/
 .idea/
+
+

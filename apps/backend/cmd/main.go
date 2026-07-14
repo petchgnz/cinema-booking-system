@@ -9,6 +9,7 @@ import (
 
 	"cinema-booking/internal/config"
 	"cinema-booking/internal/handler"
+	"cinema-booking/internal/middleware"
 	"cinema-booking/internal/repository"
 	"cinema-booking/internal/service"
 
@@ -35,9 +36,13 @@ func main() {
 	rabbitConn := connectRabbitMQ(cfg)
 	defer rabbitConn.Close()
 
+	// connect firebase
+	firebaseAuth := config.InitFirebase(cfg.FirebaseCredFile)
+
 	// wire dependencies
 	movieRepo := repository.NewMovieRepository(mongoDB)
 	showtimeRepo := repository.NewShowTimeRepository(mongoDB)
+	userRepo := repository.NewUserRepository(mongoDB)
 
 	movieService := service.NewMovieService(movieRepo)
 	showtimeService := service.NewShowtimeService(showtimeRepo)
@@ -45,8 +50,11 @@ func main() {
 	movieHandler := handler.NewMovieHandler(movieService)
 	showtimeHandler := handler.NewShowtimeHandler(showtimeService)
 
+	// middleware
+	authMiddleware := middleware.AuthMiddleware(firebaseAuth, userRepo)
+
 	// create Gin router
-	r := setupRouter(movieHandler, showtimeHandler)
+	r := setupRouter(movieHandler, showtimeHandler, authMiddleware)
 
 	// start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
@@ -61,6 +69,7 @@ func main() {
 func setupRouter(
 	movieHandler *handler.MovieHandler,
 	showtimeHandler *handler.ShowtimeHandler,
+	authMiddleware gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -75,16 +84,21 @@ func setupRouter(
 	{
 		movies := api.Group("/movies")
 		{
-			movies.POST("", movieHandler.Create)
 			movies.GET("", movieHandler.GetAll)
 			movies.GET("/:id", movieHandler.GetByID)
 		}
 
 		showtimes := api.Group("/showtimes")
 		{
-			showtimes.POST("", showtimeHandler.Create)
 			showtimes.GET("", showtimeHandler.GetAll)
 			showtimes.GET("/:id", showtimeHandler.GetByID)
+		}
+
+		protected := api.Group("")
+		protected.Use(authMiddleware)
+		{
+			protected.POST("/movies", movieHandler.Create)
+			protected.POST("/showtimes", showtimeHandler.Create)
 		}
 	}
 
