@@ -41,7 +41,7 @@ func main() {
 
 	// wire dependencies
 	movieRepo := repository.NewMovieRepository(mongoDB)
-	showtimeRepo := repository.NewShowTimeRepository(mongoDB)
+	showtimeRepo := repository.NewShowtimeRepository(mongoDB)
 	userRepo := repository.NewUserRepository(mongoDB)
 
 	movieService := service.NewMovieService(movieRepo)
