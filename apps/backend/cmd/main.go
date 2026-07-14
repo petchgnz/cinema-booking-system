@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"cinema-booking/internal/config"
+	"cinema-booking/internal/handler"
+	"cinema-booking/internal/repository"
+	"cinema-booking/internal/service"
 
 	"github.com/gin-gonic/gin"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -32,8 +35,18 @@ func main() {
 	rabbitConn := connectRabbitMQ(cfg)
 	defer rabbitConn.Close()
 
+	// wire dependencies
+	movieRepo := repository.NewMovieRepository(mongoDB)
+	showtimeRepo := repository.NewShowTimeRepository(mongoDB)
+
+	movieService := service.NewMovieService(movieRepo)
+	showtimeService := service.NewShowtimeService(showtimeRepo)
+
+	movieHandler := handler.NewMovieHandler(movieService)
+	showtimeHandler := handler.NewShowtimeHandler(showtimeService)
+
 	// create Gin router
-	r := setupRouter()
+	r := setupRouter(movieHandler, showtimeHandler)
 
 	// start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
@@ -45,7 +58,10 @@ func main() {
 }
 
 // helpers
-func setupRouter() *gin.Engine {
+func setupRouter(
+	movieHandler *handler.MovieHandler,
+	showtimeHandler *handler.ShowtimeHandler,
+) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -54,6 +70,23 @@ func setupRouter() *gin.Engine {
 			"service": "cinema-booking-api",
 		})
 	})
+
+	api := r.Group("/api/v1")
+	{
+		movies := api.Group("/movies")
+		{
+			movies.POST("", movieHandler.Create)
+			movies.GET("", movieHandler.GetAll)
+			movies.GET("/:id", movieHandler.GetByID)
+		}
+
+		showtimes := api.Group("/showtimes")
+		{
+			showtimes.POST("", showtimeHandler.Create)
+			showtimes.GET("", showtimeHandler.GetAll)
+			showtimes.GET("/:id", showtimeHandler.GetByID)
+		}
+	}
 
 	return r
 }
