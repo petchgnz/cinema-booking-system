@@ -15,7 +15,7 @@ const (
 )
 
 type Seat struct {
-	SeatNumber int        `bson:"seat_number" json:"seat_number"`
+	SeatNumber string     `bson:"seat_number" json:"seat_number"`
 	Status     SeatStatus `bson:"status" json:"status"`
 }
 
