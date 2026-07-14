@@ -1,0 +1,49 @@
+# ===========================
+# Environment & Secrets
+# ===========================
+.env
+.env.local
+.env.*.local
+
+# ===========================
+# Go & Firebase
+# ===========================
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work.sum
+apps/backend/tmp/
+apps/backend/firebase-credentials.json
+
+# ===========================
+# Vue / Node
+# ===========================
+apps/frontend/node_modules/
+apps/frontend/dist/
+apps/frontend/.vite/
+
+# ===========================
+# Docker
+# ===========================
+docker-volumes/
+
+# ===========================
+# OS
+# ===========================
+.DS_Store
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ===========================
+# IDE
+# ===========================
+.vscode/
+.idea/
+
+

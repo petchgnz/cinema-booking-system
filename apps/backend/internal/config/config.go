@@ -9,13 +9,14 @@ import (
 
 // all app's config (env)
 type Config struct {
-	AppPort     string
-	AppEnv      string
-	MongoURI    string
-	MongoDBName string
-	RedisAddr   string
-	RedisPass   string
-	RabbitMQURL string
+	AppPort          string
+	AppEnv           string
+	MongoURI         string
+	MongoDBName      string
+	RedisAddr        string
+	RedisPass        string
+	RabbitMQURL      string
+	FirebaseCredFile string
 }
 
 // this will read the value from .env and return config struct
@@ -25,13 +26,14 @@ func Load() *Config {
 	}
 
 	return &Config{
-		AppPort:     getEnv("APP_PORT", "8080"),
-		AppEnv:      getEnv("APP_ENV", "development"),
-		MongoURI:    getEnv("MONGO_URI", ""),
-		MongoDBName: getEnv("MONGO_DB_NAME", "cinema_db"),
-		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPass:   getEnv("REDIS_PASSWORD", ""),
-		RabbitMQURL: getEnv("RABBITMQ_URL", ""),
+		AppPort:          getEnv("APP_PORT", "8080"),
+		AppEnv:           getEnv("APP_ENV", "development"),
+		MongoURI:         getEnv("MONGO_URI", ""),
+		MongoDBName:      getEnv("MONGO_DB_NAME", "cinema_db"),
+		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPass:        getEnv("REDIS_PASSWORD", ""),
+		RabbitMQURL:      getEnv("RABBITMQ_URL", ""),
+		FirebaseCredFile: getEnv("FIREBASE_CREDENTIALS_FILE", "./firebase-credentials.json"),
 	}
 }
 
