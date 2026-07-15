@@ -43,18 +43,22 @@ func main() {
 	movieRepo := repository.NewMovieRepository(mongoDB)
 	showtimeRepo := repository.NewShowtimeRepository(mongoDB)
 	userRepo := repository.NewUserRepository(mongoDB)
+	bookingRepo := repository.NewBookingRepository(mongoDB)
 
 	movieService := service.NewMovieService(movieRepo)
 	showtimeService := service.NewShowtimeService(showtimeRepo)
+	lockService := service.NewLockService(redisClient)
+	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService)
 
 	movieHandler := handler.NewMovieHandler(movieService)
 	showtimeHandler := handler.NewShowtimeHandler(showtimeService)
+	bookingHandler := handler.NewBookingHandler(bookingService)
 
 	// middleware
 	authMiddleware := middleware.AuthMiddleware(firebaseAuth, userRepo)
 
 	// create Gin router
-	r := setupRouter(movieHandler, showtimeHandler, authMiddleware)
+	r := setupRouter(movieHandler, showtimeHandler, bookingHandler, authMiddleware)
 
 	// start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
@@ -69,6 +73,7 @@ func main() {
 func setupRouter(
 	movieHandler *handler.MovieHandler,
 	showtimeHandler *handler.ShowtimeHandler,
+	bookingHandler *handler.BookingHandler,
 	authMiddleware gin.HandlerFunc,
 ) *gin.Engine {
 	r := gin.Default()
@@ -99,6 +104,8 @@ func setupRouter(
 		{
 			protected.POST("/movies", movieHandler.Create)
 			protected.POST("/showtimes", showtimeHandler.Create)
+			protected.POST("/bookings/lock", bookingHandler.LockSeats)
+			protected.POST("/bookings", bookingHandler.CreateBooking)
 		}
 	}
 
