@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"cinema-booking/internal/dto"
 	"cinema-booking/internal/messaging"
@@ -11,6 +12,10 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+type SeatBroascaster interface {
+	BroadcastSeatUpdate(showtimeID, eventType, seatNumber, status string)
+}
 
 type BookingService interface {
 	LockSeats(ctx context.Context, userID string, req dto.LockSeatRequest) error
@@ -21,7 +26,8 @@ type bookingService struct {
 	bookingRepo  repository.BookingRepository
 	showtimeRepo repository.ShowtimeRepository
 	lockService  LockService
-	publisher messaging.BookingPublisher
+	publisher    messaging.BookingPublisher
+	broadcaster  SeatBroascaster
 }
 
 func NewBookingService(
@@ -29,12 +35,14 @@ func NewBookingService(
 	showtimeRepo repository.ShowtimeRepository,
 	lockService LockService,
 	publisher messaging.BookingPublisher,
+	broadcaster SeatBroascaster,
 ) BookingService {
 	return &bookingService{
 		bookingRepo:  bookingRepo,
 		showtimeRepo: showtimeRepo,
 		lockService:  lockService,
-		publisher: publisher,
+		publisher:    publisher,
+		broadcaster:  broadcaster,
 	}
 }
 
@@ -55,6 +63,9 @@ func (s *bookingService) LockSeats(ctx context.Context, userID string, req dto.L
 		}
 
 		locked = append(locked, seatNumber)
+
+		log.Printf("[BookingService] Broadcasting lock: showtime=%s seat=%s", req.ShowtimeID, seatNumber)
+		s.broadcaster.BroadcastSeatUpdate(req.ShowtimeID, "seat_locked", seatNumber, "locked")
 	}
 
 	return nil
@@ -97,18 +108,21 @@ func (s *bookingService) CreateBooking(ctx context.Context, userID string, req d
 		}
 
 		s.lockService.ReleaseLock(ctx, req.ShowtimeID, seatNumber, userID)
+
+		log.Printf("[BookingService] Broadcasting Created Booking: showtime=%s seat=%s", req.ShowtimeID, seatNumber)
+		s.broadcaster.BroadcastSeatUpdate(req.ShowtimeID, "seat_booked", seatNumber, "booked")
 	}
 
 	// publish event to RabbitMQ
 	event := messaging.BookingEvent{
-		BookingID: booking.ID.Hex(),
-		UserID: booking.UserID,
-		ShowtimeID: req.ShowtimeID,
+		BookingID:   booking.ID.Hex(),
+		UserID:      booking.UserID,
+		ShowtimeID:  req.ShowtimeID,
 		SeatNumbers: req.SeatNumbers,
-		CreatedAt: booking.CreatedAt,
+		CreatedAt:   booking.CreatedAt,
 	}
 	if err := s.publisher.PublishBookingCreated(ctx, event); err != nil {
-		fmt.Printf("Warning: failed to publish booking event: %v\n, err")
+		fmt.Printf("Warning: failed to publish booking event: %v\n", err)
 	}
 
 	return booking, nil

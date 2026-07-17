@@ -13,6 +13,7 @@ import (
 	"cinema-booking/internal/middleware"
 	"cinema-booking/internal/repository"
 	"cinema-booking/internal/service"
+	"cinema-booking/internal/ws"
 
 	"github.com/gin-gonic/gin"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -59,17 +60,22 @@ func main() {
 	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo)
 	go consumer.Start()
 
-	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService, publisher)
+	// setup websocket
+	hub := ws.NewHub()
+	go hub.Run()
+
+	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService, publisher, hub)
 
 	movieHandler := handler.NewMovieHandler(movieService)
 	showtimeHandler := handler.NewShowtimeHandler(showtimeService)
 	bookingHandler := handler.NewBookingHandler(bookingService)
+	wsHandler := handler.NewWsHandler(hub)
 
 	// middleware
 	authMiddleware := middleware.AuthMiddleware(firebaseAuth, userRepo)
 
 	// create Gin router
-	r := setupRouter(movieHandler, showtimeHandler, bookingHandler, authMiddleware)
+	r := setupRouter(movieHandler, showtimeHandler, bookingHandler, authMiddleware, wsHandler)
 
 	// start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
@@ -86,6 +92,7 @@ func setupRouter(
 	showtimeHandler *handler.ShowtimeHandler,
 	bookingHandler *handler.BookingHandler,
 	authMiddleware gin.HandlerFunc,
+	wsHandler *handler.WsHandler,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -119,6 +126,8 @@ func setupRouter(
 			protected.POST("/bookings", bookingHandler.CreateBooking)
 		}
 	}
+
+	r.GET("/ws/showtimes/:id", wsHandler.ServeWs)
 
 	return r
 }
