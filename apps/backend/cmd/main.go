@@ -9,6 +9,7 @@ import (
 
 	"cinema-booking/internal/config"
 	"cinema-booking/internal/handler"
+	"cinema-booking/internal/messaging"
 	"cinema-booking/internal/middleware"
 	"cinema-booking/internal/repository"
 	"cinema-booking/internal/service"
@@ -40,6 +41,7 @@ func main() {
 	firebaseAuth := config.InitFirebase(cfg.FirebaseCredFile)
 
 	// wire dependencies
+
 	movieRepo := repository.NewMovieRepository(mongoDB)
 	showtimeRepo := repository.NewShowtimeRepository(mongoDB)
 	userRepo := repository.NewUserRepository(mongoDB)
@@ -48,7 +50,16 @@ func main() {
 	movieService := service.NewMovieService(movieRepo)
 	showtimeService := service.NewShowtimeService(showtimeRepo)
 	lockService := service.NewLockService(redisClient)
-	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService)
+
+	publisher, err := messaging.NewBookingPublisher(rabbitConn)
+	if err != nil {
+		log.Fatalf("Failed to setup booking publisher: %v", err)
+	}
+
+	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo)
+	go consumer.Start()
+
+	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService, publisher)
 
 	movieHandler := handler.NewMovieHandler(movieService)
 	showtimeHandler := handler.NewShowtimeHandler(showtimeService)

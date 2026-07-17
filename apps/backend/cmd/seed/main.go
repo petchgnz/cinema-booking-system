@@ -85,8 +85,3 @@ func main() {
 
 	log.Println("🎬 Seed complete! Copy these IDs for testing.")
 }
-
-      apiKey: "AIzaSyCjvnaGhOKcJKae1B8OKnEjx2G8pWT9K4c",
-
-      authDomain: "cinema-booking-system-5ddda.firebaseapp.com",
-      projectId: "cinema-booking-system-5ddda",

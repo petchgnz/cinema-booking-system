@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"cinema-booking/internal/dto"
+	"cinema-booking/internal/messaging"
 	"cinema-booking/internal/model"
 	"cinema-booking/internal/repository"
 
@@ -20,17 +21,20 @@ type bookingService struct {
 	bookingRepo  repository.BookingRepository
 	showtimeRepo repository.ShowtimeRepository
 	lockService  LockService
+	publisher messaging.BookingPublisher
 }
 
 func NewBookingService(
 	bookingRepo repository.BookingRepository,
 	showtimeRepo repository.ShowtimeRepository,
 	lockService LockService,
+	publisher messaging.BookingPublisher,
 ) BookingService {
 	return &bookingService{
 		bookingRepo:  bookingRepo,
 		showtimeRepo: showtimeRepo,
 		lockService:  lockService,
+		publisher: publisher,
 	}
 }
 
@@ -93,6 +97,18 @@ func (s *bookingService) CreateBooking(ctx context.Context, userID string, req d
 		}
 
 		s.lockService.ReleaseLock(ctx, req.ShowtimeID, seatNumber, userID)
+	}
+
+	// publish event to RabbitMQ
+	event := messaging.BookingEvent{
+		BookingID: booking.ID.Hex(),
+		UserID: booking.UserID,
+		ShowtimeID: req.ShowtimeID,
+		SeatNumbers: req.SeatNumbers,
+		CreatedAt: booking.CreatedAt,
+	}
+	if err := s.publisher.PublishBookingCreated(ctx, event); err != nil {
+		fmt.Printf("Warning: failed to publish booking event: %v\n, err")
 	}
 
 	return booking, nil
