@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
+// import { useAuth } from './composables/useAuth'
+
+// const { initAuth } = useAuth()
+// initAuth() // restore sessions when refresh
 </script>
 
 <template>
-  <HelloWorld />
+  <!-- <h1>Hello</h1> -->
+  <RouterView />
 </template>
