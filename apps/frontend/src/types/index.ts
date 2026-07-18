@@ -20,7 +20,7 @@ export interface Showtime {
   seats: Seat[]
 }
 
-export interface Booking {
+export interface Booking { 
   id: string
   showtime_id: string
   seat_nubmers: string[]
