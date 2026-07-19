@@ -11,6 +11,7 @@ import (
 	"cinema-booking/internal/handler"
 	"cinema-booking/internal/messaging"
 	"cinema-booking/internal/middleware"
+	"cinema-booking/internal/notification"
 	"cinema-booking/internal/repository"
 	"cinema-booking/internal/service"
 	"cinema-booking/internal/ws"
@@ -60,7 +61,8 @@ func main() {
 		log.Fatalf("Failed to setup booking publisher: %v", err)
 	}
 
-	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo)
+	notifier := notification.NewMockNotifier()
+	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo, notifier)
 	go consumer.Start()
 
 	// setup websocket
