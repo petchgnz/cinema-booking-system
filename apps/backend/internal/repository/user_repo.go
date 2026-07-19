@@ -14,7 +14,7 @@ import (
 
 type UserRepository interface {
 	FindByFirebaseUID(ctx context.Context, uid string) (*model.User, error)
-	Upsert(ctx context.Context, user *model.User) (*model.User, error)
+	Upsert(ctx context.Context, user *model.User, adminEmail string) (*model.User, error)
 }
 
 type userRepository struct {
@@ -38,8 +38,15 @@ func (r *userRepository) FindByFirebaseUID(ctx context.Context, uid string) (*mo
 	return &user, nil
 }
 
-func (r *userRepository) Upsert(ctx context.Context, user *model.User) (*model.User, error) {
+func (r *userRepository) Upsert(ctx context.Context, user *model.User, adminEmail string) (*model.User, error) {
 	filter := bson.M{"firebase_uid": user.FirebaseUID}
+
+	// determine role: admin if email matches ADMIN_EMAIL, otherwise default to "user"
+	// $setOnInsert ensures role is only set on first login — never overwritten after that
+	role := model.RoleUser
+	if adminEmail != "" && user.Email == adminEmail {
+		role = model.RoleAdmin
+	}
 
 	update := bson.M{
 		"$set": bson.M{
@@ -50,6 +57,7 @@ func (r *userRepository) Upsert(ctx context.Context, user *model.User) (*model.U
 		"$setOnInsert": bson.M{
 			"_id":          primitive.NewObjectID(),
 			"firebase_uid": user.FirebaseUID,
+			"role":         role,
 			"created_at":   time.Now(),
 		},
 	}
