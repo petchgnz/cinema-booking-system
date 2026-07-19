@@ -22,7 +22,7 @@ type showtimeRepository struct {
 	collection *mongo.Collection
 }
 
-func NewShowTimeRepository(db *mongo.Database) ShowtimeRepository {
+func NewShowtimeRepository(db *mongo.Database) ShowtimeRepository {
 	return &showtimeRepository{
 		collection: db.Collection("showtimes"),
 	}

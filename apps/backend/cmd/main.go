@@ -9,10 +9,13 @@ import (
 
 	"cinema-booking/internal/config"
 	"cinema-booking/internal/handler"
+	"cinema-booking/internal/messaging"
 	"cinema-booking/internal/middleware"
 	"cinema-booking/internal/repository"
 	"cinema-booking/internal/service"
+	"cinema-booking/internal/ws"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
@@ -40,21 +43,40 @@ func main() {
 	firebaseAuth := config.InitFirebase(cfg.FirebaseCredFile)
 
 	// wire dependencies
+
 	movieRepo := repository.NewMovieRepository(mongoDB)
-	showtimeRepo := repository.NewShowTimeRepository(mongoDB)
+	showtimeRepo := repository.NewShowtimeRepository(mongoDB)
 	userRepo := repository.NewUserRepository(mongoDB)
+	bookingRepo := repository.NewBookingRepository(mongoDB)
 
 	movieService := service.NewMovieService(movieRepo)
 	showtimeService := service.NewShowtimeService(showtimeRepo)
+	lockService := service.NewLockService(redisClient)
+
+	publisher, err := messaging.NewBookingPublisher(rabbitConn)
+	if err != nil {
+		log.Fatalf("Failed to setup booking publisher: %v", err)
+	}
+
+	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo)
+	go consumer.Start()
+
+	// setup websocket
+	hub := ws.NewHub()
+	go hub.Run()
+
+	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService, publisher, hub)
 
 	movieHandler := handler.NewMovieHandler(movieService)
 	showtimeHandler := handler.NewShowtimeHandler(showtimeService)
+	bookingHandler := handler.NewBookingHandler(bookingService)
+	wsHandler := handler.NewWsHandler(hub)
 
 	// middleware
 	authMiddleware := middleware.AuthMiddleware(firebaseAuth, userRepo)
 
 	// create Gin router
-	r := setupRouter(movieHandler, showtimeHandler, authMiddleware)
+	r := setupRouter(movieHandler, showtimeHandler, bookingHandler, authMiddleware, wsHandler)
 
 	// start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
@@ -69,9 +91,19 @@ func main() {
 func setupRouter(
 	movieHandler *handler.MovieHandler,
 	showtimeHandler *handler.ShowtimeHandler,
+	bookingHandler *handler.BookingHandler,
 	authMiddleware gin.HandlerFunc,
+	wsHandler *handler.WsHandler,
 ) *gin.Engine {
 	r := gin.Default()
+
+	// setup CORS
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -99,8 +131,12 @@ func setupRouter(
 		{
 			protected.POST("/movies", movieHandler.Create)
 			protected.POST("/showtimes", showtimeHandler.Create)
+			protected.POST("/bookings/lock", bookingHandler.LockSeats)
+			protected.POST("/bookings", bookingHandler.CreateBooking)
 		}
 	}
+
+	r.GET("/ws/showtimes/:id", wsHandler.ServeWs)
 
 	return r
 }
