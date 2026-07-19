@@ -283,7 +283,28 @@ Events (server → client):
 
 ---
 
-## 8. Assumptions & Trade-offs
+## 8. Testing
+
+Unit tests ครอบคลุม `LockService` ซึ่งเป็น core ของระบบ โดยใช้ `miniredis` (in-memory Redis) แทน Redis จริง — ไม่ต้องรัน infrastructure ใดๆ เพื่อเทส
+
+```bash
+cd apps/backend
+go test ./internal/service/... -v
+```
+
+| Test | สิ่งที่ทดสอบ |
+|---|---|
+| `TestAcquireLock_Success` | lock seat ที่ว่างอยู่ได้สำเร็จ |
+| `TestAcquireLock_AlreadyLocked` | lock seat ที่คนอื่นถือแล้วได้ false (SetNX atomic) |
+| `TestReleaseLock_Success` | release lock แล้ว seat กลับมา available |
+| `TestReleaseLock_WrongUser` | user อื่น release lock ของคนอื่นไม่ได้ |
+| `TestIsLockedByUser_True` | เจ้าของ lock ตรวจสอบตัวเองได้ถูกต้อง |
+| `TestIsLockedByUser_False_OtherUser` | user ที่ไม่ใช่เจ้าของ lock ได้ false |
+| `TestIsLockedByUser_False_Expired` | lock ที่ TTL หมดแล้วได้ false (ใช้ `miniredis.FastForward`) |
+
+---
+
+## 9. Assumptions & Trade-offs
 
 **Assumptions:**
 - ผู้ใช้ต้อง login ด้วย Google ก่อน lock หรือ book ที่นั่งได้
