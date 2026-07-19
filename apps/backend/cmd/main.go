@@ -11,6 +11,7 @@ import (
 	"cinema-booking/internal/handler"
 	"cinema-booking/internal/messaging"
 	"cinema-booking/internal/middleware"
+	"cinema-booking/internal/notification"
 	"cinema-booking/internal/repository"
 	"cinema-booking/internal/service"
 	"cinema-booking/internal/ws"
@@ -48,24 +49,27 @@ func main() {
 	showtimeRepo := repository.NewShowtimeRepository(mongoDB)
 	userRepo := repository.NewUserRepository(mongoDB)
 	bookingRepo := repository.NewBookingRepository(mongoDB)
+	auditLogRepo := repository.NewAuditLogRepository(mongoDB)
 
 	movieService := service.NewMovieService(movieRepo)
 	showtimeService := service.NewShowtimeService(showtimeRepo)
 	lockService := service.NewLockService(redisClient)
+	auditLogService := service.NewAuditLogService(auditLogRepo)
 
 	publisher, err := messaging.NewBookingPublisher(rabbitConn)
 	if err != nil {
 		log.Fatalf("Failed to setup booking publisher: %v", err)
 	}
 
-	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo)
+	notifier := notification.NewMockNotifier()
+	consumer := messaging.NewBookingConsumer(rabbitConn, bookingRepo, notifier)
 	go consumer.Start()
 
 	// setup websocket
 	hub := ws.NewHub()
 	go hub.Run()
 
-	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService, publisher, hub)
+	bookingService := service.NewBookingService(bookingRepo, showtimeRepo, lockService, publisher, hub, auditLogService)
 
 	movieHandler := handler.NewMovieHandler(movieService)
 	showtimeHandler := handler.NewShowtimeHandler(showtimeService)
@@ -73,10 +77,11 @@ func main() {
 	wsHandler := handler.NewWsHandler(hub)
 
 	// middleware
-	authMiddleware := middleware.AuthMiddleware(firebaseAuth, userRepo)
+	authMiddleware := middleware.AuthMiddleware(firebaseAuth, userRepo, cfg.AdminEmail)
+	adminMiddleware := middleware.AdminMiddleware()
 
 	// create Gin router
-	r := setupRouter(movieHandler, showtimeHandler, bookingHandler, authMiddleware, wsHandler)
+	r := setupRouter(movieHandler, showtimeHandler, bookingHandler, authMiddleware, adminMiddleware, wsHandler)
 
 	// start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
@@ -93,6 +98,7 @@ func setupRouter(
 	showtimeHandler *handler.ShowtimeHandler,
 	bookingHandler *handler.BookingHandler,
 	authMiddleware gin.HandlerFunc,
+	adminMiddleware gin.HandlerFunc,
 	wsHandler *handler.WsHandler,
 ) *gin.Engine {
 	r := gin.Default()
@@ -129,13 +135,20 @@ func setupRouter(
 			showtimes.GET("/:id", showtimeHandler.GetByID)
 		}
 
+		// user routes (auth required)
 		protected := api.Group("")
 		protected.Use(authMiddleware)
 		{
-			protected.POST("/movies", movieHandler.Create)
-			protected.POST("/showtimes", showtimeHandler.Create)
 			protected.POST("/bookings/lock", bookingHandler.LockSeats)
 			protected.POST("/bookings", bookingHandler.CreateBooking)
+		}
+
+		// admin routes (auth + admin role required)
+		admin := api.Group("")
+		admin.Use(authMiddleware, adminMiddleware)
+		{
+			admin.POST("/movies", movieHandler.Create)
+			admin.POST("/showtimes", showtimeHandler.Create)
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"cinema-booking/internal/model"
+	"cinema-booking/internal/notification"
 	"cinema-booking/internal/repository"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -18,12 +19,14 @@ const (
 type BookingConsumer struct {
 	conn        *amqp.Connection
 	bookingRepo repository.BookingRepository
+	notifier    notification.Notifier
 }
 
-func NewBookingConsumer(conn *amqp.Connection, bookingRepo repository.BookingRepository) *BookingConsumer {
+func NewBookingConsumer(conn *amqp.Connection, bookingRepo repository.BookingRepository, notifier notification.Notifier) *BookingConsumer {
 	return &BookingConsumer{
 		conn:        conn,
 		bookingRepo: bookingRepo,
+		notifier:    notifier,
 	}
 }
 
@@ -48,9 +51,9 @@ func (c *BookingConsumer) Start() {
 	}
 
 	err = ch.QueueBind(
-		q.Name,            
-		BookingCreatedKey, 
-		BookingExchange,  
+		q.Name,
+		BookingCreatedKey,
+		BookingExchange,
 		false,
 		nil,
 	)
@@ -96,5 +99,6 @@ func (c *BookingConsumer) handleMessage(msg amqp.Delivery) {
 	}
 
 	log.Printf("[Consumer] Booking confirmed: %s", event.BookingID)
+	c.notifier.SendBookingConfirmed(event.BookingID, event.UserID, event.SeatNumbers)
 	msg.Ack(false)
 }
