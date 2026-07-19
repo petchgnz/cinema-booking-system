@@ -50,6 +50,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       FIREBASE_CREDENTIALS_JSON: '${FIREBASE_CREDENTIALS_JSON}'
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
     depends_on:
       mongodb:
         condition: service_started

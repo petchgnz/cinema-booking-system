@@ -17,6 +17,7 @@ type Config struct {
 	RedisPass        string
 	RabbitMQURL      string
 	FirebaseCredFile string
+	AdminEmail       string
 }
 
 // this will read the value from .env and return config struct
@@ -34,6 +35,7 @@ func Load() *Config {
 		RedisPass:        getEnv("REDIS_PASSWORD", ""),
 		RabbitMQURL:      getEnv("RABBITMQ_URL", ""),
 		FirebaseCredFile: getEnv("FIREBASE_CREDENTIALS_FILE", "./firebase-credentials.json"),
+		AdminEmail:       getEnv("ADMIN_EMAIL", ""),
 	}
 }
 
