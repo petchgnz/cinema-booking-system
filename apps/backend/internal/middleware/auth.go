@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -27,6 +28,7 @@ func AuthMiddleware(firebaseAuth *auth.Client, userRepo repository.UserRepositor
 		// verify
 		decoded, err := firebaseAuth.VerifyIDToken(c.Request.Context(), token)
 		if err != nil {
+			log.Printf("[Auth] Token verify failed: %v", err)
 			c.JSON(http.StatusUnauthorized, gin.H{"Error": "invalid token"})
 			c.Abort()
 			return

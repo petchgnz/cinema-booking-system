@@ -15,6 +15,7 @@ import (
 	"cinema-booking/internal/service"
 	"cinema-booking/internal/ws"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
@@ -95,6 +96,14 @@ func setupRouter(
 	wsHandler *handler.WsHandler,
 ) *gin.Engine {
 	r := gin.Default()
+
+	// setup CORS
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
