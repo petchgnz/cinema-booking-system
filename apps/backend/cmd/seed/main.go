@@ -34,6 +34,16 @@ func main() {
 	movieRepo := repository.NewMovieRepository(db)
 	showtimeRepo := repository.NewShowtimeRepository(db)
 
+	//check if data already exist
+	existing, err := movieRepo.FindAll(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to check existing movies: %v", err)
+	}
+	if len(existing) > 0 {
+		log.Println("Data already exists, skipping seed.")
+		return
+	}
+
 	movies := []*model.Movie{
 		{
 			Title:       "The Avengers",
