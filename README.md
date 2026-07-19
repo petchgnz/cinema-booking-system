@@ -4,22 +4,7 @@ A full-stack cinema ticket booking system built with Go (Gin), Vue 3, MongoDB, R
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Backend | Go 1.24 + Gin |
-| Frontend | Vue 3 + TypeScript + Tailwind CSS v4 |
-| Database | MongoDB 7 |
-| Distributed Lock | Redis 7 (SetNX) |
-| Message Queue | RabbitMQ 3.13 |
-| Real-time | WebSocket (gorilla/websocket) |
-| Authentication | Firebase Google OAuth |
-| Deployment | Docker Compose |
-
----
-
-## Architecture Overview
+## 1. System Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -29,9 +14,9 @@ A full-stack cinema ticket booking system built with Go (Gin), Vue 3, MongoDB, R
                      │ HTTP / WebSocket
 ┌────────────────────▼────────────────────────────────┐
 │                  Go (Gin) Backend                   │
-│  ┌──────────┐  ┌──────────┐  ┌────────────────┐    │
-│  │ Handler  │→ │ Service  │→ │  Repository    │    │
-│  └──────────┘  └────┬─────┘  └───────┬────────┘    │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────┐     │
+│  │ Handler  │→ │ Service  │→ │  Repository    │     │
+│  └──────────┘  └────┬─────┘  └───────┬────────┘     │
 │                     │                │              │
 │            ┌────────┴────────┐       │              │
 │            │                 │       ▼              │
@@ -59,145 +44,153 @@ cmd/
 
 internal/
   config/              ← Env config + Firebase init
-  model/               ← Domain structs (Movie, Showtime, Booking, Seat)
+  model/               ← Domain structs (Movie, Showtime, Booking, Seat, AuditLog)
   dto/                 ← Request/Response shapes
   repository/          ← MongoDB data access layer
-  service/             ← Business logic (booking, locking)
+  service/             ← Business logic (booking, locking, audit)
   handler/             ← HTTP + WebSocket handlers (Gin)
-  middleware/          ← Firebase JWT auth
+  middleware/          ← Firebase JWT auth + Admin role check
   messaging/           ← RabbitMQ publisher + consumer
+  notification/        ← Notifier interface + MockNotifier
   ws/                  ← WebSocket hub + client
 ```
 
 ---
 
-## Key Design Decisions
+## 2. Tech Stack Overview
 
-### 1. Distributed Lock with Redis (SetNX)
-
-**Problem:** Two users can select the same seat simultaneously — without a lock, both bookings would succeed.
-
-**Solution:** When a user selects a seat, the backend calls `Redis.SetNX(key, userID, 5min)`. SetNX is atomic — only one caller wins.
-
-```
-lock:seat:{showtimeID}:{seatNumber} = {userID}  TTL: 5 minutes
-```
-
-- If SetNX returns `true` → lock acquired → seat is yours for 5 minutes
-- If SetNX returns `false` → another user holds the lock → return 409 Conflict
-- On confirmation → seat is marked `booked` in MongoDB → lock released
-- On TTL expiry → lock auto-released → seat becomes available again
-
-### 2. Message Queue with RabbitMQ
-
-**Problem:** After confirming a booking, the system needs to update booking status to `confirmed`. Doing this synchronously in the HTTP handler would make the API slow and tightly coupled.
-
-**Solution:** After creating a booking, the service publishes a `booking.created` event to RabbitMQ. A background consumer goroutine picks it up and updates the booking status to `confirmed`.
-
-```
-Publisher (HTTP request) ──→ booking.exchange ──→ booking.confirmation queue
-                                                         │
-                                                Consumer goroutine (async)
-                                                         │
-                                                 Update status = confirmed
-```
-
-- Exchange: `booking.exchange` (direct)
-- Routing key: `booking.created`
-- Ack strategy: manual — Ack on success, Nack+requeue on DB errors, Nack+discard on parse errors
-
-### 3. Real-time Seat Updates with WebSocket
-
-**Problem:** When User A locks a seat, User B (viewing the same showtime page) should see the seat turn yellow immediately — without polling.
-
-**Solution:** A WebSocket Hub manages rooms keyed by `showtimeID`. When any seat changes state, `BroadcastSeatUpdate()` sends the event to all clients in that room.
-
-```
-User locks seat → BookingService → Hub.BroadcastSeatUpdate()
-                                       │
-                               broadcast to all clients
-                               in room[showtimeID]
-                                       │
-                              Vue frontend updates
-                              seat color in real-time
-```
-
-**Thread safety:** The Hub uses a single goroutine + channels instead of a mutex. All map operations (`register`, `unregister`, `broadcast`) are funneled through `hub.Run()` — no concurrent map writes possible.
-
-### 4. SeatBroadcaster Interface (Circular Import Prevention)
-
-`booking_service.go` needs to call the WebSocket hub, but importing the `ws` package from the `service` package would create a circular dependency (`service → ws → service`).
-
-**Solution:** Define a `SeatBroadcaster` interface inside the `service` package. The `ws.Hub` implements it without knowing about the service layer.
-
-```go
-// service/booking_service.go
-type SeatBroadcaster interface {
-    BroadcastSeatUpdate(showtimeID, eventType, seatNumber, status string)
-}
-```
-
-### 5. Firebase Credentials in Docker
-
-Instead of copying the credentials file into the container (a security risk), the backend reads `FIREBASE_CREDENTIALS_JSON` from environment variables. Local development falls back to a file.
+| Layer | Technology |
+|---|---|
+| Backend | Go 1.24 + Gin |
+| Frontend | Vue 3 + TypeScript + Tailwind CSS v4 |
+| Database | MongoDB 7 |
+| Distributed Lock | Redis 7 (SetNX) |
+| Message Queue | RabbitMQ 3.13 |
+| Real-time | WebSocket (gorilla/websocket) |
+| Authentication | Firebase Google OAuth |
+| Deployment | Docker Compose |
 
 ---
 
-## Running with Docker
+## 3. Booking Flow
+
+```
+1. ผู้ใช้เลือกที่นั่ง (frontend)
+         │
+         ▼
+2. POST /api/v1/bookings/lock
+   → Redis SetNX per seat (atomic, 5 min TTL)
+   → ถ้า SetNX = false → seat ถูก lock โดยคนอื่น → 409 Conflict
+   → ถ้า SetNX = true  → WebSocket broadcast: seat_locked
+                        → ทุก user เห็นที่นั่งเปลี่ยนเป็นสีเหลืองทันที
+         │
+         ▼
+3. ผู้ใช้กด Confirm ภายใน 5 นาที
+         │
+         ▼
+4. POST /api/v1/bookings
+   → ตรวจสอบว่า Redis lock ยังเป็นของ user นี้อยู่
+   → สร้าง Booking ใน MongoDB (status: pending)
+   → อัปเดต seat status → booked
+   → Release Redis lock
+   → WebSocket broadcast: seat_booked → ที่นั่งเปลี่ยนเป็นสีแดง
+   → Publish booking.created event → RabbitMQ
+         │
+         ▼ (async)
+5. RabbitMQ Consumer
+   → Update Booking status: pending → confirmed
+   → Trigger MockNotifier (log การแจ้งเตือน)
+
+กรณีไม่ชำระภายใน 5 นาที:
+   → Redis TTL หมด → lock ถูกปล่อยอัตโนมัติ
+   → seat กลับเป็น available
+```
+
+---
+
+## 4. Redis Lock Strategy
+
+**ปัญหา:** ผู้ใช้ 2 คนสามารถเลือกที่นั่งเดียวกันพร้อมกันได้ ถ้าไม่มี lock ทั้งคู่จะ booking สำเร็จทั้งคู่
+
+**วิธีแก้:** ใช้ `Redis.SetNX` ซึ่งเป็น atomic operation — มีแค่ผู้ชนะ 1 คนเท่านั้น
+
+```
+lock:seat:{showtimeID}:{seatNumber} = {userID}   TTL: 5 minutes
+```
+
+**ทำไมถึงเลือก SetNX:**
+- **Atomic** — ไม่มี race condition ระหว่าง check และ set
+- **TTL (Time To Live) อัตโนมัติ** — ถ้าผู้ใช้ทิ้ง tab หรือ timeout ที่นั่งจะถูกปล่อยโดยอัตโนมัติโดยไม่ต้องมี cleanup job
+- **userID เป็น value** — ป้องกัน user อื่น release lock ของคนอื่น (check value ก่อน delete เสมอ)
+
+**Trade-offs:**
+- Lock อยู่แค่ใน Redis ไม่ได้ sync กับ MongoDB seat status → ต้อง verify lock ก่อน confirm เสมอ
+- ถ้า Redis ล่ม lock หายทั้งหมด → seat อาจถูก double-book ได้ชั่วคราว
+
+---
+
+## 5. Message Queue (RabbitMQ)
+
+**ปัญหา:** การอัปเดต booking status เป็น `confirmed` ไม่ควรทำใน HTTP request โดยตรง เพราะทำให้ API ช้า
+
+**วิธีแก้:** หลัง booking สร้างสำเร็จ service จะ publish event ไป RabbitMQ แล้ว background consumer จัดการต่อ
+
+```
+Publisher (HTTP request)
+    │
+    └──→ booking.exchange (direct exchange)
+              │
+              └──→ booking.confirmation queue
+                          │
+                   Consumer goroutine (async)
+                          │
+                   Update status = confirmed
+                          │
+                   Trigger MockNotifier
+```
+
+**Ack Strategy:**
+- **Ack** — อัปเดต DB สำเร็จ
+- **Nack + requeue=true** — DB error → retry ได้
+- **Nack + requeue=false** — parse error → message เสีย ไม่ควร retry
+
+**ทำไมไม่ทำใน HTTP handler:**
+- HTTP handler ควรตอบกลับเร็ว → ผู้ใช้ไม่รอ (respones ส่วนสำคัญไปก่อน แล้ว tasks ที่เหลือไปทำต่อใน consumer)
+- ถ้า DB ช้าหรือล่ม RabbitMQ จะ retry ให้อัตโนมัติ
+- Decoupling — consumer สามารถ scale แยกจาก API ได้
+
+---
+
+## 6. วิธีรันระบบ
 
 ### Prerequisites
 
 - Docker Desktop
-- A Firebase project with Google Sign-In enabled
-- A Firebase service account credentials JSON
+- Firebase project ที่เปิด Google Sign-In
+- Firebase service account credentials JSON
 
-### 1. Clone the repository
+### ขั้นตอน
 
 ```bash
+# 1. Clone
 git clone <repo-url>
 cd cinema-booking
-```
 
-### 2. Set up environment variables
-
-Copy the example file and fill in your values:
-
-```bash
+# 2. ตั้งค่า environment
 cp .env.example .env
+# แก้ไข .env ให้ครบ (ดู .env.example สำหรับรายละเอียด)
+
+# 3. Build และรัน
+docker compose up --build -d
+
+# 4. Seed ข้อมูลตัวอย่าง (ครั้งแรกเท่านั้น)
+docker compose run --rm backend ./seed
+
+# 5. รันครั้งต่อไป (ไม่ต้อง build ใหม่)
+docker compose up -d
 ```
 
-Edit `.env`:
-
-```env
-# MongoDB
-MONGO_USER=admin
-MONGO_PASSWORD=your_mongo_password
-
-# Redis
-REDIS_PASSWORD=your_redis_password
-
-# RabbitMQ
-RABBITMQ_USER=admin
-RABBITMQ_PASSWORD=your_rabbitmq_password
-
-# Firebase (paste your service account JSON as a single line)
-FIREBASE_CREDENTIALS_JSON={"type":"service_account","project_id":"..."}
-
-# Firebase (Frontend)
-VITE_FIREBASE_API_KEY=your_api_key
-VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=your_project_id
-```
-
-> **Getting `FIREBASE_CREDENTIALS_JSON`:** Go to Firebase Console → Project Settings → Service Accounts → Generate new private key. Open the downloaded JSON, copy the entire content, and paste it as a single line (remove all newlines).
-
-### 3. Start all services
-
-```bash
-docker compose up --build
-```
-
-This starts: MongoDB, Redis, RabbitMQ, Backend (Go), Frontend (Vue/nginx)
+### Services
 
 | Service | URL |
 |---|---|
@@ -205,69 +198,54 @@ This starts: MongoDB, Redis, RabbitMQ, Backend (Go), Frontend (Vue/nginx)
 | Backend API | http://localhost:8080 |
 | RabbitMQ Management | http://localhost:15672 |
 
-### 4. Seed demo data (first time only)
+### Environment Variables (.env)
 
-```bash
-docker compose run --rm backend ./seed
+```env
+MONGO_USER=admin
+MONGO_PASSWORD=your_password
+REDIS_PASSWORD=your_password
+RABBITMQ_USER=admin
+RABBITMQ_PASSWORD=your_password
+FIREBASE_CREDENTIALS_JSON={"type":"service_account",...}  # single line
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+ADMIN_EMAIL=your-email@gmail.com  # user นี้จะได้ role=admin
 ```
 
-This creates 2 movies (The Avengers, Inception) with 2 showtimes each and 40 seats per showtime. Running the seed again is safe — it checks for existing data and skips if already seeded.
+> **FIREBASE_CREDENTIALS_JSON:** Firebase Console → Project Settings → Service Accounts → Generate new private key → copy ทั้งหมดเป็น single line
 
-### 5. Start without rebuilding (subsequent runs)
+### Admin Role
 
-```bash
-docker compose up -d
-```
+user ที่ email ตรงกับ `ADMIN_EMAIL` จะได้ role `admin` โดยอัตโนมัติตอน login ครั้งแรก
+
+Admin เท่านั้นที่สร้าง movie และ showtime ได้ (`POST /api/v1/movies`, `POST /api/v1/showtimes`)
 
 ---
 
-## API Endpoints
+## 7. API Endpoints
 
 Base URL: `http://localhost:8080`
 
-### Health Check
+### Public
 
 ```http
 GET /health
-```
-
-### Movies
-
-```http
 GET /api/v1/movies
-```
-
-```http
 GET /api/v1/movies/:id
-```
-
-### Showtimes
-
-```http
 GET /api/v1/showtimes
 GET /api/v1/showtimes/:id
 ```
 
-### Bookings (requires Firebase JWT in `Authorization: Bearer <token>`)
+### User (requires `Authorization: Bearer <firebase_id_token>`)
 
-#### Lock seats (temporary hold — 5 minutes)
+#### Lock seats
 
 ```http
 POST /api/v1/bookings/lock
-Authorization: Bearer <firebase_id_token>
-Content-Type: application/json
 
 {
   "showtime_id": "685a1f2e3c4b5d6e7f8a9b0c",
-  "seat_numbers": ["A1", "A2"]
-}
-```
-
-Response:
-```json
-{
-  "message": "seats locked successfully",
-  "expires_in": "5 minutes",
   "seat_numbers": ["A1", "A2"]
 }
 ```
@@ -276,8 +254,6 @@ Response:
 
 ```http
 POST /api/v1/bookings
-Authorization: Bearer <firebase_id_token>
-Content-Type: application/json
 
 {
   "showtime_id": "685a1f2e3c4b5d6e7f8a9b0c",
@@ -285,19 +261,12 @@ Content-Type: application/json
 }
 ```
 
-Response:
-```json
-{
-  "_id": "685b2c3d4e5f6a7b8c9d0e1f",
-  "user_id": "firebase_uid_here",
-  "showtime_id": "685a1f2e3c4b5d6e7f8a9b0c",
-  "seat_numbers": ["A1", "A2"],
-  "status": "pending",
-  "created_at": "2025-07-19T10:30:00Z"
-}
-```
+### Admin only (requires admin role)
 
-> Note: `status` starts as `pending`. The RabbitMQ consumer updates it to `confirmed` asynchronously within seconds.
+```http
+POST /api/v1/movies
+POST /api/v1/showtimes
+```
 
 ### WebSocket
 
@@ -305,7 +274,7 @@ Response:
 ws://localhost:8080/ws/showtimes/:showtimeId
 ```
 
-**Incoming events (server → client):**
+Events (server → client):
 
 ```json
 { "type": "seat_locked", "showtime_id": "...", "seat_number": "A1", "status": "locked" }
@@ -314,77 +283,18 @@ ws://localhost:8080/ws/showtimes/:showtimeId
 
 ---
 
-## Booking Flow
+## 8. Assumptions & Trade-offs
 
-```
-User selects seats
-      │
-      ▼
-POST /bookings/lock
-  → Redis SetNX per seat (atomic, 5min TTL)
-  → WebSocket broadcast: seat_locked → all users see seat turn yellow
-      │
-      ▼
-User clicks "Confirm"
-      │
-      ▼
-POST /bookings
-  → Verify Redis lock still held by this user
-  → Create Booking in MongoDB (status: pending)
-  → Update seat status to "booked" in Showtime document
-  → Release Redis lock
-  → WebSocket broadcast: seat_booked → all users see seat turn red
-  → Publish booking.created event to RabbitMQ
-      │
-      ▼ (async)
-RabbitMQ Consumer
-  → Update Booking status: pending → confirmed
-```
+**Assumptions:**
+- ผู้ใช้ต้อง login ด้วย Google ก่อน lock หรือ book ที่นั่งได้
+- 1 lock request = lock ทุกที่นั่งที่เลือกพร้อมกัน ถ้า seat ใด seat หนึ่งล้มเหลวจะ rollback ทั้งหมด
 
----
+**Trade-offs:**
 
-## Project Structure
-
-```
-cinema-booking/
-├── docker-compose.yml
-├── .env.example
-├── apps/
-│   ├── backend/
-│   │   ├── Dockerfile
-│   │   ├── cmd/
-│   │   │   ├── main.go          ← App entrypoint + dependency wiring
-│   │   │   └── seed/main.go     ← Database seeder
-│   │   └── internal/
-│   │       ├── config/          ← Env + Firebase config
-│   │       ├── model/           ← Domain models
-│   │       ├── dto/             ← Request/Response DTOs
-│   │       ├── repository/      ← MongoDB repositories
-│   │       ├── service/         ← Business logic
-│   │       ├── handler/         ← Gin HTTP + WS handlers
-│   │       ├── middleware/       ← Firebase auth middleware
-│   │       ├── messaging/       ← RabbitMQ publisher + consumer
-│   │       └── ws/              ← WebSocket hub + client
-│   └── frontend/
-│       ├── Dockerfile
-│       ├── nginx.conf
-│       └── src/
-│           ├── api/             ← Axios API calls
-│           ├── composables/     ← useWebSocket, useAuth
-│           ├── stores/          ← Pinia auth store
-│           ├── router/          ← Vue Router + auth guards
-│           ├── views/           ← Page components
-│           └── types/           ← TypeScript types
-```
-
----
-
-## Concurrency Handling
-
-| Concern | Approach |
-|---|---|
-| Double-booking same seat | Redis SetNX (atomic) — only one user acquires the lock |
-| WebSocket map race condition | Single goroutine Hub pattern — no mutex needed |
-| RabbitMQ publish thread safety | New AMQP channel per publish call |
-| Lock expiry | 5-minute TTL auto-releases locks if user abandons checkout |
-| RabbitMQ startup race | Docker healthcheck (`check_port_connectivity`) + `condition: service_healthy` |
+| Decision | Why | Alternative |
+|---|---|---|
+| Redis SetNX TTL 5 min | พอดีกับ checkout flow ไม่นานเกินไป | Shorter TTL = UX แย่ลง, Longer = seat ถูก hold นานเกิน |
+| RabbitMQ direct exchange | Simple, predictable routing | Topic exchange ถ้าต้องการ event types หลายแบบ |
+| WebSocket Hub single goroutine | Thread safe โดยไม่ต้องใช้ mutex | Mutex ง่ายกว่าแต่เสี่ยง deadlock มากกว่า |
+| MockNotifier | ลด dependency ภายนอก ใช้ interface ขยายได้ | Real email/Line พร้อม production |
+| Firebase Auth | ไม่ต้องสร้าง auth ระบบเอง | JWT custom อ่อนแอกว่าถ้า implement ไม่ดี |
